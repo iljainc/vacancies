@@ -4,8 +4,8 @@ services:
         volumes:
             - ./:/var/www/
             - ./_docker/nginx/conf.d/:/etc/nginx/conf.d/:ro
-#        ports:
-#            - "80:80"
+        ports:
+            - "127.0.0.1:80:80"
         depends_on:
             - app
         container_name: ${APP_NAME}_nginx
