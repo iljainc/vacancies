@@ -20,7 +20,7 @@ use App\Models\ExportProjectPost;
 
 use App\Http\Controllers\Controller;
 use App\Services\LangService;
-use Idpromogroup\LaravelOpenAIAssistants\Facades\OpenAIAssistants;
+use Idpromogroup\LaravelOpenaiResponses\Services\OpenAIService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 
@@ -59,11 +59,6 @@ class TelegramAssistantController extends Controller
             }
         }
         
-        // Проверяем callback_query отдельно
-        if (isset($this->request['callback_query']['message']['chat']['type']) && $this->request['callback_query']['message']['chat']['type'] !== 'private') {
-            return response()->json(['status' => 'ignored - not private chat']);
-        }
-        
         // Игнорируем другие типы обновлений
         $ignoreTypes = ['inline_query', 'chosen_inline_result', 'shipping_query', 'pre_checkout_query', 'poll', 'poll_answer', 'my_chat_member', 'chat_member', 'chat_join_request'];
         foreach ($ignoreTypes as $type) {
@@ -72,11 +67,16 @@ class TelegramAssistantController extends Controller
             }
         }
 
+        // Проверяем callback_query отдельно
+        if (isset($this->request['callback_query']['message']['chat']['type']) && $this->request['callback_query']['message']['chat']['type'] !== 'private') {
+            return response()->json(['status' => 'ignored - not private chat']);
+        }
+        
         // Логирование всех входящих сообшений
         $this->log();
 
         $this->getUser();
-
+        
         $return = [];
 
         if (isset($this->request['callback_query']))        $this->handleCallback($this->request['callback_query']);
@@ -86,23 +86,67 @@ class TelegramAssistantController extends Controller
     }
 
     function handleMessage($message) {
-        if (isset($message['text'])) {
-            $text = $message['text'];
-
-            if ($text == '/start')                                              $this->sendWelcomeMessage();
+        // Получаем текст из сообщения или описания к медиа
+        $text = $message['text'] ?? $message['caption'] ?? null;
+        
+        // Обрабатываем текст если есть
+        if (!empty($text)) {
+            if ($text == '/start')                                               $this->sendWelcomeMessage();
             else if ($text =='/help')                                            $this->actionHelpMessage();
             else if ($this->tUser->state == TelegramUser::MASTER_ACCEPTS_ORDER)  $this->actionMasterAcceptOrder($text);
             else if (!empty($text)){
                 // Отправляем индикатор набора сообщения
                 TelegramService::sendTypingAction($this->tUser->tid);
                 
-                // Основной код
-                $answer = OpenAIAssistants::assistant('asst_SKsRIkUQ5sGcEfXHHWOMqxCi', $text, 
-                    'telegram', $this->tUser->tid, 0);
-                if ($answer) 
-                    $this->sendMessage($answer);
+                // Отправляем текст в ИИ
+                $service = new OpenAIService('telegram_' . $this->tUser->tid, $text);
+                $result = $service
+                    ->setConversation((string)$this->tUser->tid)
+                    ->useTemplate(2)
+                    ->execute();
+                
+                if ($result->success) {
+                    $answer = $result->getAssistantMessage();
+                    if ($answer) {
+                        $this->sendMessage($answer);
+                    }
+                } else {
+                    Log::error('OpenAI error for user ' . $this->tUser->tid . ': ' . $result->error);
+                    $this->sendMessage(__('Sorry, a technical error occurred. Please try again later. #1'));
+                }
             };
         };
+        
+        // Обрабатываем файлы если есть
+        $downloadedFiles = $this->handleMediaFiles($message);
+        if (!empty($downloadedFiles)) {
+            foreach ($downloadedFiles as $filePath) {
+                try {
+                    TelegramService::sendTypingAction($this->tUser->tid);
+                    
+                    $service = new OpenAIService('telegram_' . $this->tUser->tid, 'Analyze this file');
+                    $service->setConversation((string)$this->tUser->tid)
+                            ->useTemplate(2)
+                            ->attachLocalFile($filePath);
+                    
+                    $result = $service->execute();
+                    
+                    if ($result->success) {
+                        $answer = $result->getAssistantMessage();
+                        if ($answer) {
+                            $this->sendMessage($answer);
+                        }
+                    } else {
+                        Log::error('OpenAI file error for user ' . $this->tUser->tid . ': ' . $result->error);
+                        $this->sendMessage(__('Sorry, an error occurred while processing the file. #2'));
+                    }
+                } finally {
+                    if (file_exists($filePath)) {
+                        @unlink($filePath);
+                    }
+                }
+            }
+        }
     }
 
     function handleCallback($callbackQuery) {
@@ -110,10 +154,6 @@ class TelegramAssistantController extends Controller
 
         // Мастер принимает заказ на исполнение.
         if ($data == 'start')                                                             $this->sendWelcomeMessage();
-        if ($data == 'edit_master')                                                       $this->actionInitEditMasterStep2($callbackQuery);
-        else if ($data == 'сlose_master')                                                 $this->actionCloseMaster();
-        else if ($data == 'launch_master')                                                $this->actionLaunchMaster();
-        //else if ($data == 'no_need_edit_master')                                          $this->actionNoEditMasterStep();
         else if (preg_match('/^extend_order_(\d+)$/', $data, $matches))         $this->actionExtendOrder($matches[1]);
         else if (preg_match('/^fulfill_masterOrder_(\d+)$/', $data, $matches))  $this->actionInitMasterAcceptOrder($matches[1]);
         else if (strpos($data, 'admin_') !== false)                                 $this->handleAdminCallback($data, $callbackQuery["message"]["message_id"]);
@@ -177,8 +217,8 @@ class TelegramAssistantController extends Controller
             ->get();
         
         foreach ($logs as $log) {
-            // Удаляем сообщение через TelegramService
-            \App\Services\TelegramService::deleteMessage($log->tid, $log->message_id);
+            // Убираем только кнопки, сообщение остается
+            \App\Services\TelegramService::editMessageReplyMarkup($log->tid, $log->message_id, []);
         };
     }
 
@@ -217,26 +257,25 @@ class TelegramAssistantController extends Controller
     function sendWelcomeMessage() {
         $this->tUser->setStateNULL();
 
-        $responseText = __("Welcome!
-        
-We are here to help you find the perfect master, ready to solve any of your tasks.  
-If you are a master, we will help you find new orders.  
-And the best part – our bot can chat with you just like a real person.
+        $responseText = "Привет! 👋
 
-Need help")." → /help";
+Я помогу тебе разместить твоё предложение на аукцион.
+Просто напиши мне описание, цену и локацию.
+
+Если есть вопросы – просто напиши.";
 
         $this->sendMessage($responseText, $this->returnMenuButton());
     }
 
     function actionHelpMessage() {
-        $responseText = __("👋 Hi! My name is FixFox — your smart assistant. Here’s what I can do for you:
+        $responseText = __("👋 Привет! Я — виртуальный помощник для размещения лотов на аукционе 😊
 
-🔍 Find a specialist for any task — just describe what you need, and I’ll connect you with the right person.  
-👨‍🔧 Help professionals — if you’re a master, I’ll help you get new clients and orders.  
-📋 Manage your orders — check your active tasks or close them when they’re done.  
-🚪 Control your profile — as a master, you can activate or pause your profile anytime.  
+Могу помочь создать объявление. Чтобы начать, пришлите:
+1. Полное описание лота.  
+2. Стартовая ставка в шекелях  
+3. Локация — адрес, где можно забрать
 
-💬 I can chat with you like a real person: answer your questions, guide you step by step, and make the process simple.");
+Можно просто отправить все в одном сообщении, и я всё оформлю. Есть вопросы?");
 
         $this->sendMessage($responseText, $this->returnMenuButton());
     }
@@ -416,4 +455,43 @@ Need help")." → /help";
             $this->sendMessage($telegramUser->user->lang, $this->returnMenuButton());
         };
     }
+
+    private function handleMediaFiles($message) {
+        $downloadedFiles = [];
+        $fileIds = [];
+        
+        // Собираем file_id из разных типов медиа
+        if (isset($message['photo'])) {
+            // Берем фото наибольшего размера
+            $photo = end($message['photo']);
+            $fileIds[] = $photo['file_id'];
+        }
+        
+        if (isset($message['video'])) {
+            $fileIds[] = $message['video']['file_id'];
+        }
+        
+        if (isset($message['document'])) {
+            $fileIds[] = $message['document']['file_id'];
+        }
+        
+        if (isset($message['audio'])) {
+            $fileIds[] = $message['audio']['file_id'];
+        }
+        
+        // Скачиваем файлы
+        foreach ($fileIds as $fileId) {
+            try {
+                $filePath = TelegramService::downloadFile($fileId);
+                if ($filePath) {
+                    $downloadedFiles[] = $filePath;
+                }
+            } catch (\Exception $e) {
+                Log::error('Error downloading file: ' . $e->getMessage());
+            }
+        }
+        
+        return $downloadedFiles;
+    }
+    
 }

@@ -7,6 +7,7 @@ use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\ConnectException;
 use GuzzleHttp\Exception\RequestException;
+use Illuminate\Support\Facades\Log;
 
 class TelegramService
 {
@@ -173,31 +174,73 @@ class TelegramService
             }
         } else {
             // Text message only
-            $json = [
-                'json' => [
-                    'chat_id' => $chatId,
-                    'text' => $message
-                ]
-            ];
+            // Telegram limit is 4096 characters - split if needed
+            $maxLength = 4096;
             
-            // Add entities if provided, otherwise use parse_mode
-            if (!empty($entities)) {
-                $json['json']['entities'] = $entities;
+            if (mb_strlen($message) <= $maxLength) {
+                // Message fits in one part
+                $json = [
+                    'json' => [
+                        'chat_id' => $chatId,
+                        'text' => $message
+                    ]
+                ];
+                
+                // Add entities if provided, otherwise use parse_mode
+                if (!empty($entities)) {
+                    $json['json']['entities'] = $entities;
+                } else {
+                    $json['json']['parse_mode'] = 'HTML';
+                }
+                
+                // Add keyboard if provided
+                if (!empty($keyboard)) {
+                    $json['json']['reply_markup'] = json_encode($keyboard);
+                }
+                
+                // Add topic ID if provided
+                if (!empty($topicId)) {
+                    $json['json']['message_thread_id'] = $topicId;
+                }
+                
+                $results[] = self::send($chatId, $json, 'sendMessage', $type);
             } else {
-                $json['json']['parse_mode'] = 'HTML';
+                // Split message into multiple parts
+                $parts = self::splitMessage($message, $maxLength);
+                
+                foreach ($parts as $index => $part) {
+                    $json = [
+                        'json' => [
+                            'chat_id' => $chatId,
+                            'text' => $part
+                        ]
+                    ];
+                    
+                    // Add entities/parse_mode to all parts
+                    if (!empty($entities)) {
+                        $json['json']['entities'] = $entities;
+                    } else {
+                        $json['json']['parse_mode'] = 'HTML';
+                    }
+                    
+                    // Add keyboard only to last part
+                    if (!empty($keyboard) && $index === count($parts) - 1) {
+                        $json['json']['reply_markup'] = json_encode($keyboard);
+                    }
+                    
+                    // Add topic ID if provided
+                    if (!empty($topicId)) {
+                        $json['json']['message_thread_id'] = $topicId;
+                    }
+                    
+                    $results[] = self::send($chatId, $json, 'sendMessage', $type);
+                    
+                    // Small delay between parts
+                    if ($index < count($parts) - 1) {
+                        usleep(300000); // 0.3 seconds
+                    }
+                }
             }
-            
-            // Add keyboard if provided
-            if (!empty($keyboard)) {
-                $json['json']['reply_markup'] = json_encode($keyboard);
-            }
-            
-            // Add topic ID if provided
-            if (!empty($topicId)) {
-                $json['json']['message_thread_id'] = $topicId;
-            }
-            
-            $results[] = self::send($chatId, $json, 'sendMessage', $type);
         }
         
         // Return single result if only one, otherwise return array
@@ -229,7 +272,7 @@ class TelegramService
     }
 
 
-    public static function send($chatId, $json, $command, $type = '') {
+    public static function send($chatId, $json, $command, $type = '', $retryAttempt = 0) {
         $client = new Client();
 
         try {
@@ -256,6 +299,11 @@ class TelegramService
             
             return self::log($chatId, $json, null, $messageId, $type, $responseBody);
         } catch (ConnectException $e) {
+            // Retry once after 2 seconds on connection error
+            if ($retryAttempt === 0) {
+                sleep(2);
+                return self::send($chatId, $json, $command, $type, 1);
+            }
             $error = 'Connection error: ' . $e->getMessage();
             return self::log($chatId, $json, $error, null, $type);
         } catch (RequestException $e) {
@@ -414,6 +462,55 @@ class TelegramService
     }
 
     /**
+     * Split long message into parts respecting Telegram limit
+     */
+    private static function splitMessage(string $message, int $maxLength): array
+    {
+        $parts = [];
+        $paragraphs = preg_split('/\n\n+/', $message);
+        $currentPart = '';
+        
+        foreach ($paragraphs as $paragraph) {
+            // Если один абзац больше лимита - режем его по символам
+            if (mb_strlen($paragraph) > $maxLength) {
+                // Сохраняем текущую часть
+                if (!empty($currentPart)) {
+                    $parts[] = trim($currentPart);
+                    $currentPart = '';
+                }
+                
+                // Режем длинный абзац на куски по maxLength
+                while (mb_strlen($paragraph) > $maxLength) {
+                    $parts[] = mb_substr($paragraph, 0, $maxLength);
+                    $paragraph = mb_substr($paragraph, $maxLength);
+                }
+                
+                // Остаток начинаем новую часть
+                $currentPart = $paragraph;
+            } else {
+                // Проверяем влезет ли абзац в текущую часть
+                $testPart = empty($currentPart) ? $paragraph : $currentPart . "\n\n" . $paragraph;
+                
+                if (mb_strlen($testPart) > $maxLength) {
+                    // Не влезает - сохраняем текущую часть, начинаем новую
+                    $parts[] = trim($currentPart);
+                    $currentPart = $paragraph;
+                } else {
+                    // Влезает - добавляем
+                    $currentPart = $testPart;
+                }
+            }
+        }
+        
+        // Добавляем последнюю часть
+        if (!empty($currentPart)) {
+            $parts[] = trim($currentPart);
+        }
+        
+        return $parts;
+    }
+
+    /**
      * Check if the error response indicates user blocked the bot
      */
     private static function isUserBlockedBot($responseBody)
@@ -454,6 +551,67 @@ class TelegramService
         }
 
         return false;
+    }
+
+    /**
+     * Download file from Telegram by file_id and save to temp directory
+     * Returns absolute path to downloaded file or null on error
+     */
+    public static function downloadFile($fileId)
+    {
+        $client = new Client();
+        
+        try {
+            // Get file info
+            $response = $client->request('POST', 'https://api.telegram.org/bot' . self::getToken() . '/getFile', [
+                'json' => ['file_id' => $fileId]
+            ]);
+            
+            $responseData = json_decode($response->getBody()->getContents(), true);
+            
+            if (!isset($responseData['result']['file_path'])) {
+                return null;
+            }
+            
+            $filePath = $responseData['result']['file_path'];
+            
+            // Download file
+            $fileUrl = 'https://api.telegram.org/file/bot' . self::getToken() . '/' . $filePath;
+            $fileContent = $client->request('GET', $fileUrl)->getBody()->getContents();
+            
+            // Save to temp directory
+            $tempDir = storage_path('app/temp');
+            if (!file_exists($tempDir)) {
+                mkdir($tempDir, 0755, true);
+            }
+            
+            $fileName = uniqid('tg_') . '_' . basename($filePath);
+            $localPath = $tempDir . '/' . $fileName;
+            
+            file_put_contents($localPath, $fileContent);
+            
+            return $localPath;
+            
+        } catch (\Exception $e) {
+            Log::error('TelegramService::downloadFile failed: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Edit message reply markup (inline keyboard)
+     */
+    public static function editMessageReplyMarkup($chatId, $messageId, $replyMarkup = [])
+    {
+        $json = [
+            'json' => [
+                'chat_id' => $chatId,
+                'message_id' => $messageId,
+                'reply_markup' => json_encode(['inline_keyboard' => $replyMarkup])
+            ]
+        ];
+        
+        return self::send($chatId, $json, 'editMessageReplyMarkup');
     }
 
 }

@@ -1,4 +1,11 @@
 <?php return array (
+  'idpromogroup/laravel-openai-responses' => 
+  array (
+    'providers' => 
+    array (
+      0 => 'Idpromogroup\\LaravelOpenaiResponses\\LaravelOpenaiResponsesServiceProvider',
+    ),
+  ),
   'laravel/pail' => 
   array (
     'providers' => 

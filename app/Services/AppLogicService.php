@@ -22,65 +22,51 @@ class AppLogicService
     }
 
     /**
-     * Пример функции создания заказа.
+     * Функция создания заказа.
      */
     private function addOrder($arguments, $uid = false)
     {
         // Проверяем наличие обязательных полей
-        if (empty($arguments['description']) || empty($arguments['locations']) || !is_array($arguments['locations'])) {
-            Log::error('addOrder: отсутствуют обязательные поля', ['arguments' => $arguments]);
-            return false;
+        if (empty($arguments['lot_name']) || empty($arguments['description']) || empty($arguments['bid']) || empty($arguments['locations'])) {
+            \Log::error('addOrder: отсутствуют обязательные поля', ['arguments' => $arguments]);
+            return ['error' => 'Missing required fields: lot_name, description, bid, locations'];
         }
 
-        foreach ($arguments['locations'] as $location) {
-            if (empty($location['address']) || empty($location['city']) || empty($location['country'])) {
-                Log::error('addOrder: некорректные данные локации', ['location' => $location]);
-                return false;
-            }
+        // Проверяем что bid это число
+        if (!is_numeric($arguments['bid']) || $arguments['bid'] <= 0) {
+            \Log::error('addOrder: некорректная ставка', ['bid' => $arguments['bid']]);
+            return ['error' => 'Invalid bid amount'];
         }
 
-        $text = $arguments['description'];
+        $description = $arguments['description'];
+        $bid = (float) $arguments['bid'];
+        $locations = $arguments['locations'];
+        $lotName = $arguments['lot_name'];
 
-        // Предположим, что мы инициализируем $text заранее
-        $textParts[] = $text;
+        $uid = $uid ?: auth()->id() ?: 1;
 
-        $uid = $uid ?: auth()->id();
-
-        // Создаём заказ сразу
+        // Создаём заказ со всеми полученными данными
         $order = Order::create([
-            'uid'                      => $uid,
-            'text'                     => '',    // временно пустое (или что-то по умолчанию)
+            'uid' => $uid,
+            'text' => $description,
+            'lot_name' => $lotName,
+            'source' => Order::SOURCE_AI,
+            'bid' => $bid,
+            'locations' => $locations,
         ]);
 
-        // Массив для ID локаций
-        $locationIds = [];
+        // Присоединяем временные файлы для этого пользователя
+        $filesCount = $order->attachTemporaryFiles($uid);
 
-        foreach ($arguments['locations'] as $locationData) {
-            // Собираем адреса
-            $textParts[] = $locationData['address'];
+        // Локации определим позже - пока не привязываем
 
-            // Ищем локацию
-            $location = Location::findLocation(
-                $locationData['city'],
-                false,
-                $locationData['country']
-            );
-
-            if ($location) {
-                // Сохраняем ID
-                $locationIds[] = $location->id;
-            }
-        }
-
-        // Привязываем все найденные локации одним вызовом
-        $uniqueLocationIds = array_unique($locationIds);
-        $order->locations()->attach($uniqueLocationIds);
-
-        // Склеиваем адреса с переводами строки и обновляем поле text
-        $order->text = implode("\n", $textParts);
-        $order->save();
-
-        return ['order_id' => $order->id];
+        return [
+            'success' => true,
+            'order_id' => $order->id,
+            'message' => 'Order created successfully',
+            'bid' => $bid,
+            'locations' => $locations
+        ];
     }
 
     private function closeOrder($arguments, $uid = false)

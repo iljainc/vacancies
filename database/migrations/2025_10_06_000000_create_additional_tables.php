@@ -11,6 +11,21 @@ return new class extends Migration
      */
     public function up(): void
     {
+        Schema::create('users', function (Blueprint $table) {
+            $table->id();
+            $table->string('name');
+            $table->string('email')->nullable()->unique();
+            $table->timestamp('email_verified_at')->nullable();
+            $table->string('password')->nullable();
+            $table->string('phone')->nullable();
+            $table->string('telegram_id')->nullable();
+            $table->string('state')->nullable();
+            $table->string('lang')->nullable();
+            $table->integer('lang_priority')->nullable();
+            $table->timestamp('lang_check_date')->nullable();
+            $table->rememberToken();
+            $table->timestamps();
+        });
         // LogEntry table
         Schema::create('log_entries', function (Blueprint $table) {
             $table->id();
