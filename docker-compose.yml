@@ -5,7 +5,7 @@ services:
             - ./:/var/www/
             - ./_docker/nginx/conf.d/:/etc/nginx/conf.d/:ro
         ports:
-            - "127.0.0.1:80:80"
+            - "89:80"
         depends_on:
             - app
         container_name: ${APP_NAME}_nginx
@@ -63,8 +63,8 @@ services:
     phpmyadmin:
         image: phpmyadmin
         restart: always
-#        ports:
-#            - "8080:80"
+        ports:
+            - "8089:80"
         environment:
             PMA_ARBITRARY: 1
             PMA_HOST: ${DB_HOST}
