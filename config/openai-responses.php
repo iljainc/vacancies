@@ -8,6 +8,9 @@ return [
     // API-ключ по умолчанию (можно переопределить при вызове)
     'api_key'       => env('OPENAI_RESPONSES_API_KEY'),
 
+    // таймаут запросов к API (секунды)
+    'timeout'       => 300,
+
     // сервис для выполнения function calls
     'function_handler' => env(
         'OPENAI_RESPONSES_FUNCTION_HANDLER',
