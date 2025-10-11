@@ -20,4 +20,4 @@ yarn-error.log
 /.vscode
 tmp/
 composer.lock
-_docker/nginx/conf.d
+
