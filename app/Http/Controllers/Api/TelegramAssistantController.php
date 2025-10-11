@@ -257,9 +257,8 @@ class TelegramAssistantController extends Controller
     function sendWelcomeMessage() {
         $this->tUser->setStateNULL();
 
-        $responseText = "ПВместо этого давай так:
+        $responseText = "Привет!
 
-Привет!
 Пришли сюда текст вакансии и своё резюме — я сделаю адаптированную версию с нужными формулировками.
 
 Если есть вопросы – просто напиши.";
@@ -268,9 +267,8 @@ class TelegramAssistantController extends Controller
     }
 
     function actionHelpMessage() {
-        $responseText = __("Вместо этого давай так:
+        $responseText = __("Привет!
 
-Привет!
 Пришли сюда текст вакансии и своё резюме — я сделаю адаптированную версию с нужными формулировками.
 
 Если есть вопросы – просто напиши.");
