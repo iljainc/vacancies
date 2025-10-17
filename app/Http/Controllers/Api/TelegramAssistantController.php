@@ -26,8 +26,10 @@ use Illuminate\Http\Request;
 
 use App\Services\TelegramService;
 use App\Services\ChatGptService;
+use App\Jobs\TypingActionJob;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
 
 class TelegramAssistantController extends Controller
 {
@@ -89,14 +91,18 @@ class TelegramAssistantController extends Controller
         // Получаем текст из сообщения или описания к медиа
         $text = $message['text'] ?? $message['caption'] ?? null;
         
+        // Записываем в memcached что процесс активен
+        Cache::put("typing_active_{$this->tUser->tid}", true, 60);
+        
+        // Запускаем асинхронную задачу для периодической отправки typing action
+        TypingActionJob::dispatch($this->tUser->tid, 60, 5);
+        
         // Обрабатываем текст если есть
         if (!empty($text)) {
             if ($text == '/start')                                               $this->sendWelcomeMessage();
             else if ($text =='/help')                                            $this->actionHelpMessage();
             else if ($this->tUser->state == TelegramUser::MASTER_ACCEPTS_ORDER)  $this->actionMasterAcceptOrder($text);
             else if (!empty($text)){
-                // Отправляем индикатор набора сообщения
-                TelegramService::sendTypingAction($this->tUser->tid);
                 
                 // Отправляем текст в ИИ
                 $service = new OpenAIService('telegram_' . $this->tUser->tid, $text);
@@ -122,10 +128,9 @@ class TelegramAssistantController extends Controller
         if (!empty($downloadedFiles)) {
             foreach ($downloadedFiles as $filePath) {
                 try {
-                    TelegramService::sendTypingAction($this->tUser->tid);
                     
                     $service = new OpenAIService('telegram_' . $this->tUser->tid, 'Analyze this file');
-                    $service->setConversation((string)$this->tUser->tid)
+                    $service->setConversation($this->tUser->tid)
                             ->useTemplate(2)
                             ->attachLocalFile($filePath);
                     
@@ -140,6 +145,7 @@ class TelegramAssistantController extends Controller
                         Log::error('OpenAI file error for user ' . $this->tUser->tid . ': ' . $result->error);
                         $this->sendMessage(__('Sorry, an error occurred while processing the file. #2'));
                     }
+                    
                 } finally {
                     if (file_exists($filePath)) {
                         @unlink($filePath);
@@ -147,6 +153,9 @@ class TelegramAssistantController extends Controller
                 }
             }
         }
+        
+        // Удаляем из memcached - процесс завершен
+        Cache::forget("typing_active_{$this->tUser->tid}");
     }
 
     function handleCallback($callbackQuery) {

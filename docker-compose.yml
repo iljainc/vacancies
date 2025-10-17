@@ -29,6 +29,7 @@ services:
         depends_on:
             - db
             - memcached
+            - redis
         container_name: ${APP_NAME}
         dns:
             - 8.8.8.8
@@ -43,6 +44,34 @@ services:
         image: memcached:latest
         container_name: ${APP_NAME}_memcached
         command: memcached -m 64 -p 11211 -u memcache -l 0.0.0.0 -U 0
+        networks:
+            - vacancies_network
+
+    redis:
+        image: redis:alpine
+        container_name: ${APP_NAME}_redis
+        command: redis-server --appendonly yes
+        volumes:
+            - redis_data:/data
+        networks:
+            - vacancies_network
+
+    queue-worker:
+        build:
+            context: .
+            dockerfile: _docker/app/Dockerfile
+        env_file:
+            - .env
+        volumes:
+            - ./:/var/www/
+        depends_on:
+            - db
+            - redis
+        container_name: ${APP_NAME}_queue_worker
+        command: php artisan queue:work --sleep=1 --tries=3 --max-time=3600
+        dns:
+            - 8.8.8.8
+            - 8.8.4.4
         networks:
             - vacancies_network
 
@@ -78,6 +107,9 @@ services:
             - "traefik.http.routers.${APP_NAME}_phpmyadmin.entrypoints=websecure"
             - "traefik.http.routers.${APP_NAME}_phpmyadmin.tls.certresolver=myresolver"
             - "traefik.http.services.${APP_NAME}_phpmyadmin.loadbalancer.server.port=80"
+
+volumes:
+    redis_data:
 
 networks:
     vacancies_network:
