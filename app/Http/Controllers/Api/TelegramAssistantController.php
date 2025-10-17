@@ -95,7 +95,7 @@ class TelegramAssistantController extends Controller
         Cache::put("typing_active_{$this->tUser->tid}", true, 60);
         
         // Запускаем асинхронную задачу для периодической отправки typing action
-        TypingActionJob::dispatch($this->tUser->tid, 60, 5);
+        TypingActionJob::dispatch($this->tUser->tid, 60, 6);
         
         // Обрабатываем текст если есть
         if (!empty($text)) {
