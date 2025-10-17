@@ -28,7 +28,6 @@ services:
             - ./:/var/www/
         depends_on:
             - db
-            - memcached
             - redis
         container_name: ${APP_NAME}
         dns:
@@ -39,13 +38,6 @@ services:
         networks:
             - vacancies_network
             - web
-
-    memcached:
-        image: memcached:latest
-        container_name: ${APP_NAME}_memcached
-        command: memcached -m 64 -p 11211 -u memcache -l 0.0.0.0 -U 0
-        networks:
-            - vacancies_network
 
     redis:
         image: redis:alpine
