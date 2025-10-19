@@ -20,7 +20,7 @@ use App\Models\ExportProjectPost;
 
 use App\Http\Controllers\Controller;
 use App\Services\LangService;
-use Idpromogroup\LaravelOpenaiResponses\Services\OpenAIService;
+use Idpromogroup\LaravelOpenaiResponses\Services\LorService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 
@@ -95,7 +95,7 @@ class TelegramAssistantController extends Controller
         Cache::put("typing_active_{$this->tUser->tid}", true, 60);
         
         // Запускаем асинхронную задачу для периодической отправки typing action
-        TypingActionJob::dispatch($this->tUser->tid, 60, 6);
+        TypingActionJob::dispatch($this->tUser->tid, 60, 7);
         
         // Обрабатываем текст если есть
         if (!empty($text)) {
@@ -105,7 +105,7 @@ class TelegramAssistantController extends Controller
             else if (!empty($text)){
                 
                 // Отправляем текст в ИИ
-                $service = new OpenAIService('telegram_' . $this->tUser->tid, $text);
+                $service = new LorService('telegram_' . $this->tUser->tid, $text);
                 $result = $service
                     ->setConversation((string)$this->tUser->tid)
                     ->useTemplate(2)
@@ -129,7 +129,7 @@ class TelegramAssistantController extends Controller
             foreach ($downloadedFiles as $filePath) {
                 try {
                     
-                    $service = new OpenAIService('telegram_' . $this->tUser->tid, 'Analyze this file');
+                    $service = new LorService('telegram_' . $this->tUser->tid, 'Analyze this file');
                     $service->setConversation($this->tUser->tid)
                             ->useTemplate(2)
                             ->attachLocalFile($filePath);
@@ -146,6 +146,8 @@ class TelegramAssistantController extends Controller
                         $this->sendMessage(__('Sorry, an error occurred while processing the file. #2'));
                     }
                     
+                } catch (\Exception $e) {
+                    $this->sendMessage(__($e->getMessage()));
                 } finally {
                     if (file_exists($filePath)) {
                         @unlink($filePath);

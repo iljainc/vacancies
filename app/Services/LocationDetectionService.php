@@ -3,7 +3,7 @@
 namespace App\Services;
 
 use App\Models\Location;
-use Idpromogroup\LaravelOpenAIAssistants\Facades\OpenAIAssistants;
+use Idpromogroup\LaravelOpenaiResponses\Services\LorService;
 
 class LocationDetectionService
 {
@@ -20,13 +20,9 @@ class LocationDetectionService
         $assistantId = config('app.location_assistant_id');
         
         try {
-            $rawAnswer = OpenAIAssistants::assistantNoThread(
-                $assistantId,
-                $text,
-                $aiContext,
-                0,
-                0
-            );
+            $lorService = new LorService('location_detection', $text);
+            $result = $lorService->setInstructions($aiContext)->execute();
+            $rawAnswer = $result->success ? $result->data : '';
 
             // Decode JSON (handle optional ```json fences)
             $decoded = json_decode($rawAnswer, true);

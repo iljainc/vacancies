@@ -2,7 +2,7 @@
 namespace App\Services;
 
 use App\Models\TranslationCache;
-use Idpromogroup\LaravelOpenAIAssistants\Facades\OpenAIAssistants;
+use Idpromogroup\LaravelOpenaiResponses\Services\LorService;
 
 /*
  * VER 03.11.2024
@@ -36,11 +36,15 @@ class LangService
 
         $data = '{"text":"'.$text.'","lang":"'.$toLang.'"}';
 
-        $newText = OpenAIAssistants::assistantNoThread(self::$getLangAssistantId, $data, 'LangService:t', 0, 0);
+        $lorService = new LorService('lang_translation', $data);
+        $result = $lorService->setInstructions('LangService:t')->execute();
+        $newText = $result->success ? $result->data : '';
 
         // Иногда сбоит
         if (!empty($text) && empty($newText)) {
-            $newText = OpenAIAssistants::assistantNoThread(self::$getLangAssistantId, $data, 'LangService:t', 0, 0);
+            $lorService = new LorService('lang_translation', $data);
+            $result = $lorService->setInstructions('LangService:t')->execute();
+            $newText = $result->success ? $result->data : '';
         };
 
         if (!empty($text) && !empty($newText)) {
@@ -61,8 +65,9 @@ class LangService
         $context = mb_substr($text, 0, 500);
                 
         // Передаем ID ассистента в функцию assistant с userId
-        $code = OpenAIAssistants::assistantNoThread('asst_dnZBIKPq8bSTvaic2dh9ZHpo', 
-            $context, 'LangService:f', $userId, 0);
+        $lorService = new LorService('lang_detection', $context);
+        $result = $lorService->setInstructions('LangService:f')->execute();
+        $code = $result->success ? $result->data : '';
 
         $codeLower = mb_strtolower($code);
 
