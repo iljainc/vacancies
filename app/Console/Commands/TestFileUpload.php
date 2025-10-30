@@ -39,10 +39,20 @@ class TestFileUpload extends Command
             $this->line("Uploading to OpenAI...");
             
             try {
+                $config = config('lor.main_assistant');
                 $service = new LorService("telegram_{$tid}", 'Analyze this file and tell me what you see');
                 $service->setConversation($tid)
-                        ->useTemplate(2)
-                        ->attachLocalFile($filePath);
+                        ->setInstructions($config['instructions']);
+                
+                // Применяем параметры из конфига
+                if (isset($config['model'])) {
+                    $service->setModel($config['model']);
+                }
+                if (isset($config['temperature'])) {
+                    $service->setTemperature($config['temperature']);
+                }
+                
+                $service->attachLocalFile($filePath);
                 
                 $result = $service->execute();
                 

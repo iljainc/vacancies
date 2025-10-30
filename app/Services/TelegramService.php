@@ -614,4 +614,38 @@ class TelegramService
         return self::send($chatId, $json, 'editMessageReplyMarkup');
     }
 
+    /**
+     * Send PDF document to user
+     */
+    public static function sendDocument($chatId, $filePath, $caption = '', $type = 'document')
+    {
+        if (!file_exists($filePath)) {
+            Log::error('TelegramService::sendDocument - File not found: ' . $filePath);
+            return null;
+        }
+
+        $json = [
+            'multipart' => [
+                [
+                    'name' => 'chat_id',
+                    'contents' => (string)$chatId
+                ],
+                [
+                    'name' => 'document',
+                    'contents' => fopen($filePath, 'r'),
+                    'filename' => basename($filePath)
+                ]
+            ]
+        ];
+
+        if (!empty($caption)) {
+            $json['multipart'][] = [
+                'name' => 'caption',
+                'contents' => $caption
+            ];
+        }
+
+        return self::send($chatId, $json, 'sendDocument', $type);
+    }
+
 }

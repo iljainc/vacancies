@@ -96,7 +96,7 @@ class TelegramAssistantController extends Controller
         
         // Запускаем асинхронную задачу для периодической отправки typing action
         TypingActionJob::dispatch($this->tUser->tid, 60, 7);
-        
+
         // Обрабатываем текст если есть
         if (!empty($text)) {
             if ($text == '/start')                                               $this->sendWelcomeMessage();
@@ -105,21 +105,21 @@ class TelegramAssistantController extends Controller
             else if (!empty($text)){
                 
                 // Отправляем текст в ИИ
+                $config = config('lor.main_assistant');
                 $service = new LorService('telegram_' . $this->tUser->tid, $text);
-                $result = $service
-                    ->setConversation((string)$this->tUser->tid)
-                    ->useTemplate(2)
-                    ->execute();
+                $service->setConversation((string)$this->tUser->tid)
+                    ->setModel($config['model'])
+                    ->setInstructions($config['instructions'])
+                    ->setTemperature($config['temperature']);
                 
-                if ($result->success) {
-                    $answer = $result->getAssistantMessage();
-                    if ($answer) {
-                        $this->sendMessage($answer);
-                    }
-                } else {
-                    Log::error('OpenAI error for user ' . $this->tUser->tid . ': ' . $result->error);
-                    $this->sendMessage(__('Sorry, a technical error occurred. Please try again later. #1'));
+                if (isset($config['tools']) && !empty($config['tools'])) {
+                    $service->setTools($config['tools']);
                 }
+                
+                $result = $service->execute();
+
+                $answer = $result->getAssistantMessage();
+                $this->sendMessage($answer);
             };
         };
         
@@ -129,10 +129,18 @@ class TelegramAssistantController extends Controller
             foreach ($downloadedFiles as $filePath) {
                 try {
                     
+                    $config = config('lor.main_assistant');
                     $service = new LorService('telegram_' . $this->tUser->tid, 'Analyze this file');
                     $service->setConversation($this->tUser->tid)
-                            ->useTemplate(2)
-                            ->attachLocalFile($filePath);
+                            ->setModel($config['model'])
+                            ->setInstructions($config['instructions'])
+                            ->setTemperature($config['temperature']);
+                    
+                    if (isset($config['tools']) && !empty($config['tools'])) {
+                        $service->setTools($config['tools']);
+                    }
+                    
+                    $service->attachLocalFile($filePath);
                     
                     $result = $service->execute();
                     
